@@ -1,5 +1,6 @@
 import bpy
 from .utils import *
+import math
 
 class LASER_TRACER_PT(bpy.types.Panel):
     bl_label = "Laser Tracer"
@@ -18,6 +19,7 @@ class LASER_TRACER_PT(bpy.types.Panel):
         layout.prop_search(properties, "laser_obj", bpy.data, "objects", text="Laser")
         layout.prop(properties, "velocity")
         layout.prop(properties, "motionblur")
+        layout.prop(properties, "end_time_offset")
 
         layout.operator("laser_tracer.laser_tracer", text="Execute")
 
@@ -51,63 +53,100 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
             if not fcurve is None:
                 # end point should be at the next frame where the sparks begin to show
-                t1 = int(fcurve.keyframe_points[0].co[0]) + 1
+                t1 = int(fcurve.keyframe_points[0].co[0]) + properties.end_time_offset
 
                 scene.frame_set(t1)
-                trackerPos = tracker.matrix_world.to_translation()
-
-                minT = -1
-                minDistance = -1
+                tracker_pos = tracker.matrix_world.to_translation()
 
                 # find the minimum distance for the velocity
+                # behind and in front to later calculate the optimum point taking
+                # motionblur correction into consideration
+                t0_behind = -1
+                min_distance_behind = math.inf
+                t0_after = -1
+                min_distance_after = math.inf
+
                 for t in range(0, t1):
                     scene.frame_set(t)
 
-                    distance = trackerPos - origin.matrix_world.to_translation()
+                    start = origin.matrix_world.to_translation()
 
-                    distance.normalize()
+                    n = tracker_pos - start
+                    n.normalize()
 
-                    end = origin.matrix_world.to_translation() + distance * (t1 - t) * vel
-                    diff = trackerPos - end
+                    end = start + n * (t1 - t) * vel
+                    test_behind = n.dot(end - tracker_pos)
+                    diff = tracker_pos - end
 
-                    if minDistance == -1:
-                        minDistance = diff.length
-                        minT = t
-                    elif diff.length < minDistance:
-                        minDistance = diff.length
-                        minT = t
+                    if test_behind < 0:
+                        if diff.length < min_distance_behind:
+                            min_distance_behind = diff.length
+                            t0_behind = t
+                    else:
+                        if diff.length < min_distance_after:
+                            min_distance_after = diff.length
+                            t0_after = t
 
-                if minT != -1:
-                    scene.frame_set(minT)
+                if t0_behind != -1 and t0_after != -1:
+                    scene.frame_set(t0_behind)
+                    start_behind = origin.matrix_world.to_translation()
 
-                    distance = trackerPos - origin.matrix_world.to_translation()
+                    scene.frame_set(t0_after)
+                    start_after = origin.matrix_world.to_translation()
 
-                    distance.normalize()
+                    end = tracker_pos.copy()
+                    # end = start + distance * (t1 - minT) * vel
+                    new_end_behind = self.optim(start_behind, end, t0_behind, t1, motionblur)
+                    vel_behind = (new_end_behind - start_behind).length / (t1 - t0_behind)
 
-                    end = origin.matrix_world.to_translation() + distance * (t1 - minT) * vel
-                    motionblurdiff = end - (origin.matrix_world.to_translation() + distance * ((t1 - 1 - minT) * vel + motionblur * vel))
-                    # motionblurdiff = trackerPos - (origin.matrix_world.to_translation() + distance * ((t1 - 1 - minT) * vel + motionblur * vel))
-                    # test = trackerPos - distance * motionblur * vel
-                    # new_vel = (trackerPos - origin.matrix_world.to_translation()).length / (t1 - minT)
+                    new_end_after = self.optim(start_after, end, t0_after, t1, motionblur)
+                    vel_after = (new_end_after - start_after).length / (t1 - t0_after)
 
-                    # TODO (just a little bit) because motionblur diff it makes the path longer - velocity slower -> motionblur slower -> optimization problem
-                    self.create_laser_path(minT, t1, origin.matrix_world.to_translation(), end + motionblurdiff, tracker.name, laser_obj)
+                    if abs(vel_after - vel) < abs(vel_behind - vel):
+                        obj_name = tracker.name
+                        curve_name = tracker.name + "_d" + str(round(vel_after - vel, 2))
+                        self.create_laser_path(t0_after, t1, start_after, new_end_after, curve_name, obj_name, laser_obj)
+                    else:
+                        obj_name = tracker.name
+                        curve_name = tracker.name + "_d" + str(round(vel_behind - vel, 2))
+                        self.create_laser_path(t0_behind, t1, start_behind, new_end_behind, curve_name, obj_name, laser_obj)
 
         return {'FINISHED'}
 
-    def create_laser_path(self, t0, t1, start, end, name: str, laser_obj):
+    def optim(self, start, end, t0, t1, motionblur, r=10000):
+        n = end - start
+
+        n.normalize()
+
+        new_end = end.copy()
+        i = 0
+
+        while True and i < r:
+            new_vel = (start - new_end).length / (t1 - t0)
+            motionblur_end = start + n * ((t1 - 1 - t0) * new_vel + motionblur * new_vel)
+            new_end += end - motionblur_end
+
+            # the motionblur_end should be at the original end
+            if (motionblur_end - end).length < 0.000001:
+                break
+
+            i += 1
+
+        return new_end
+
+    def create_laser_path(self, t0, t1, start, end, curve_name: str, laser_name: str, laser_obj):
         # bpy.context.scene.frame_set(t1)
         lasers_coll = get_or_create_collection(bpy.context.scene.collection, "lasers")
         curves_coll = get_or_create_collection(lasers_coll, "curves")
 
         # setup curve
-        curve = create_curve(start, end, name + "_curve")
+        curve = create_curve(start, end, curve_name + "_curve")
 
         curve.splines.active.points[0].co = (0, 0, 0, 1)
         curve.splines.active.points[1].co = (end - start).to_4d()
         curve.splines.active.points[1].co.w = 1
 
-        curve_obj = bpy.data.objects.new(name + "_curve", curve)
+        curve_obj = bpy.data.objects.new(curve_name + "_curve", curve)
         curves_coll.objects.link(curve_obj)
         curve_obj.location = start
 
@@ -122,7 +161,7 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
         # add constraint to object to curve
         laser = copy_object(laser_obj, lasers_coll)
-        laser.name = name + "_laser"
+        laser.name = laser_name + "_laser"
 
         laser.hide_render = True
         laser.keyframe_insert('hide_render', frame=t0 - 1)

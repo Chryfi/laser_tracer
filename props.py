@@ -13,6 +13,8 @@ class LASER_TRACER_Props(bpy.types.PropertyGroup, LASER_TRACER_RegisterModule):
     velocity: FloatProperty(name="Velocity", description="The velocity of the laser bolts in meters / frame.", default=3.0)
     motionblur: FloatProperty(name="Motionblur", description="The motionblur to take into the calculation. It should "
                                                              "be the same as the render motionblur.", default=1.0)
+    end_time_offset: IntProperty(name="Time Offset", description="Define after how many frames after the first "
+                                                                 "keyframe of the tracker the laser should impact.", default=1)
 
     def register():
         bpy.types.Scene.lasertracer = bpy.props.PointerProperty(type=LASER_TRACER_Props)
