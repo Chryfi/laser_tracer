@@ -128,9 +128,13 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
             # the motionblur_end should be at the original end
             if (motionblur_end - end).length < 0.000001:
+                print("Found optimum")
                 break
 
             i += 1
+
+            if i == r:
+                print("Didn't find optimum")
 
         return new_end
 
