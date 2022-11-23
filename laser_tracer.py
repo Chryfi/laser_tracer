@@ -36,6 +36,7 @@ class LASER_TRACER_OT(bpy.types.Operator):
         motionblur = properties.motionblur
         origin = properties.laser_origin
         laser_obj = properties.laser_obj
+        self.lightsaber_obj = properties.lightsaber_obj
 
         if laser_obj is None or origin is None or trackers is None:
             return {'CANCELLED'}
@@ -113,6 +114,34 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
         return {'FINISHED'}
 
+    def getPathEnd(self, start, tracker_pos, t0, t1, v):
+        if self.lightsaber_obj != None:
+            reflect_point = self.lightsaber_obj.matrix_world.to_translation() # TODO - use length of lightsaber
+            
+            n0 = reflect_point - start
+            n0.normalize()
+            
+            end0 = n0 * (t1 - t0) * v
+            
+            behind_reflect = n0.dot(end0 - reflect_point)
+            
+            if behind_reflect > 0:
+                #laser is after the lightsaber, it should be reflected
+                diff_length = (end0 - reflect_point).length
+                
+                n1 = tracker_pos - reflect_point
+                n1.normalize()
+                
+                return reflect_point + n1 * diff_length
+                
+            else:
+                return end0
+        else:
+            n = tracker_pos - start
+            n.normalize()
+                    
+            return start + n * (t1 - t0) * v
+    
     def optim(self, start, end, t0, t1, motionblur, r=10000):
         n = end - start
 
