@@ -15,20 +15,27 @@ class LASER_TRACER_RegisterModule():
         pass
 
 
-# return the curve datablock
-def create_curve(a, b, curvename: str):
-    curveData = bpy.data.curves.new(curvename, type='CURVE')
-    curveData.dimensions = '3D'
-    curveData.use_path = True
+# returns a curve datablock which starts at (0,0,0), all points will be shifted
+def create_curve(a, b, curvename: str, spline_type='POLY'):
+    return create_curve_points([a, b], curvename, spline_type)
 
-    nurbsline = curveData.splines.new('NURBS')
-    nurbsline.points.add(1)
-    nurbsline.use_endpoint_u = True
 
-    nurbsline.points[0].co = (a[0], a[1], a[2], 1)
-    nurbsline.points[1].co = (b[0], b[1], b[2], 1)
+# returns a curve datablock which starts at (0,0,0), all points will be shifted
+def create_curve_points(points, curvename: str, spline_type='POLY'):
+    curve_data = bpy.data.curves.new(curvename, type='CURVE')
+    curve_data.dimensions = '3D'
+    curve_data.use_path = True
 
-    return curveData
+    splines = curve_data.splines.new(spline_type)
+    splines.points.add(len(points) - 1)
+    splines.use_endpoint_u = True
+
+    for p in range(len(splines.points)):
+        #create the curve relative to (0,0,0)
+        po = points[p] - points[0]
+        splines.points[p].co = (po[0], po[1], po[2], 1)
+
+    return curve_data
 
 
 def get_fcurve(obj, channel: str):

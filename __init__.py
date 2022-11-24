@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Laser Tracer",
     "author": "Christian F. (known as Chryfi)",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (3, 0, 0),
     "location": "3D window toolshelf > laser tracer tab",
     "description": "",
