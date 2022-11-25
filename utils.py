@@ -21,27 +21,53 @@ def create_curve(a, b, curvename: str, spline_type='POLY'):
 
 
 # returns a curve datablock which starts at (0,0,0), all points will be shifted
-def create_curve_points(points, curvename: str, spline_type='POLY'):
+def create_curve_points(points, curvename: str, spline_type='BEZIER'):
     curve_data = bpy.data.curves.new(curvename, type='CURVE')
     curve_data.dimensions = '3D'
     curve_data.use_path = True
 
-    splines = curve_data.splines.new(spline_type)
-    splines.points.add(len(points) - 1)
-    splines.use_endpoint_u = True
+    spline = curve_data.splines.new(spline_type)
 
-    for p in range(len(splines.points)):
-        #create the curve relative to (0,0,0)
-        po = points[p] - points[0]
-        splines.points[p].co = (po[0], po[1], po[2], 1)
+    if spline_type == 'BEZIER':
+        spline_points = spline.bezier_points
+    else:
+        spline_points = spline.points
+
+    spline_points.add(len(points) - 1)
+    spline.use_endpoint_u = True
+
+    if spline_type == 'BEZIER':
+        for p in range(1, len(spline_points) + 1):
+            sp = spline_points[p - 1]
+            # create the curve relative to (0,0,0)
+
+            if p == len(spline_points):
+                po1 = points[p - 2] - points[0]
+            else:
+                po1 = points[p] - points[0]
+
+            po = points[p - 1] - points[0]
+
+            dir = (po1 - po).normalized() * 0.01
+
+            sp.co = (po[0], po[1], po[2])
+            sp.handle_left = po  # - dir
+            sp.handle_right = po  ## + dir
+            # sp.handle_left_type = 'VECTOR'
+            # sp.handle_right_type = 'VECTOR'
+    else:
+        for p in range(len(spline_points)):
+            # create the curve relative to (0,0,0)
+            po = points[p] - points[0]
+            spline_points[p].co = (po[0], po[1], po[2], 1)
 
     return curve_data
 
 
-def get_fcurve(obj, channel: str):
+def get_fcurve(obj, channel: str, index=0):
     if not obj.animation_data is None and obj.animation_data.action:
         action = bpy.data.actions.get(obj.animation_data.action.name)
-        fcu = action.fcurves.find(channel)
+        fcu = action.fcurves.find(channel, index=index)
 
         return fcu
 

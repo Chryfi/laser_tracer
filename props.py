@@ -22,9 +22,12 @@ class LASER_TRACER_Props(bpy.types.PropertyGroup, LASER_TRACER_RegisterModule):
     end_time_offset: IntProperty(name="Time Offset",
                                  description="Define after how many frames after the first keyframe of the tracker "
                                              "the laser should impact.", default=1)
+    laser_time_range: IntProperty(name="Time Range",
+                                  description="How long the range of frames to search for should be each laser. Save "
+                                              "some performance..", default=200, min=2)
     object_mb_steps: IntProperty(name="Object Motionblur Steps",
                                  description="Define the motionblur steps each laser object should have. This should "
-                                             "be increased when lightsaber reflection is used", default=1)
+                                             "be increased when lightsaber reflection is used", default=1, min=1, max=7)
     laser_axis: EnumProperty(name="Laser Axis",
                              description="Axis of the laser. This would be used for the modifiers / constraints",
                              items={('X', 'X', 'X'), ('Y', 'Y', 'Y'), ('Z', 'Z', 'Z'), ('-X', '-X', '-X'), \
