@@ -26,9 +26,11 @@ class LASER_TRACER_PT(bpy.types.Panel):
         layout.prop_search(properties, "lightsaber_bottom", bpy.data, "objects", text="Lightsaber Bottom")
         layout.prop(properties, "velocity")
         layout.prop(properties, "motionblur")
+        layout.prop(properties, "lightsaber_motionblur")
         layout.prop(properties, "end_time_offset")
         layout.prop(properties, "laser_axis")
         layout.prop(properties, "object_mb_steps")
+        layout.prop(properties, "laser_length")
         layout.prop(properties, "laser_time_range")
 
         layout.operator("laser_tracer.laser_tracer", text="Execute")
@@ -149,6 +151,7 @@ class LASER_TRACER_OT(bpy.types.Operator):
         lightsaber_top = self.props.lightsaber_top
         lightsaber_bottom = self.props.lightsaber_bottom
         time_range = self.props.laser_time_range
+        lightsaber_mb = self.props.lightsaber_motionblur
 
         if laser_obj is None or emitter is None or trackers is None or (bool(lightsaber_top) ^ bool(lightsaber_bottom)):
             return {'CANCELLED'}
@@ -183,13 +186,13 @@ class LASER_TRACER_OT(bpy.types.Operator):
                 rand = random.random()
                 use_reflect = lightsaber_top is not None and lightsaber_bottom is not None
 
-                pathtests = []
-
                 for t in range(max(0, t1 - time_range), t1):
                     scene.frame_set(t)
                     #TODO use motionblur for the origin too?
                     origin = emitter.matrix_world.to_translation()
                     path = Path(origin, t, t1)
+
+                    new_vel = vel
 
                     if use_reflect:
                         # find the first point in time where the laser might hit the lightsaber
@@ -203,16 +206,24 @@ class LASER_TRACER_OT(bpy.types.Operator):
                             ls = lightsaber_top.matrix_world.to_translation() - lightsaber_bottom.matrix_world.to_translation()
                             reflect_point1 = lightsaber_bottom.matrix_world.to_translation() + ls * rand
 
-                            reflect_point = reflect_point0 + (reflect_point1 - reflect_point0) * motionblur
+                            reflect_point = reflect_point0 + (reflect_point1 - reflect_point0) * lightsaber_mb
 
                             n = (reflect_point - origin).normalized()
 
                             r0 = (reflect_point[0] - origin[0]) / n[0]
 
                             if (tr - t) * vel <= r0 <= (tr - t + 1) * vel:
+                                """pathreflection = Path(origin, t, tr)
+
+                                pathreflection.calculate_path([reflect_point], vel)
+
+                                # optimise the reflection so that the laser gets bend at the reflection point
+                                if pathreflection.dot_end_vec(reflect_point) < 0:
+                                    new_ref_path = self.optim(pathreflection, reflect_point + n * laser_length * 0.5, motionblur)
+                                    new_vel = new_ref_path.velocity()"""
                                 break
 
-                    path.calculate_path([reflect_point, tracker_pos], vel)
+                    path.calculate_path([reflect_point, tracker_pos], new_vel)
 
                     test_behind = path.dot_end_vec(tracker_pos)
 
@@ -240,9 +251,6 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
                     curve_name = tracker.name + "_d" + str(round(laser_vel - vel, 2))
                     self.create_laser_path(laser_path, curve_name, tracker.name, laser_obj)
-
-                    for pathtest in pathtests:
-                        self.create_laser_path(pathtest, curve_name + "_test", tracker.name, laser_obj)
 
         return {'FINISHED'}
 
@@ -280,7 +288,7 @@ class LASER_TRACER_OT(bpy.types.Operator):
         lasers_coll = get_or_create_collection(bpy.context.scene.collection, "lasers")
         curves_coll = get_or_create_collection(lasers_coll, "curves")
 
-        # setup curve #TODO POLY squishes with curve modifier-> use bezier with vector handles
+        # setup curve
         curve = create_curve_points(path.points, curve_name + "_curve")
 
         curve_obj = bpy.data.objects.new(curve_name + "_curve", curve)
