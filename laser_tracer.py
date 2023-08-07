@@ -38,16 +38,16 @@ class LASER_TRACER_PT(bpy.types.Panel):
 
 
 class Path:
-    def __init__(self, start, t0, t1):
+    def __init__(self, start, t0, end_t):
         self.start = start.copy()
         self.points = [self.start]
-        self.t0 = min(t0, t1)
-        self.t1 = max(t0, t1)
+        self.t0 = min(t0, end_t)
+        self.end_t = max(t0, end_t)
 
     def calculate_path(self, targets0: list, velocity):
         targets = [i for i in targets0 if i is not None]
 
-        factor = (self.t1 - self.t0) * velocity
+        factor = (self.end_t - self.t0) * velocity
 
         for i in range(len(targets)):
             point = targets[i]
@@ -76,7 +76,7 @@ class Path:
         return n.dot(self.points[-1] - point)
 
     def copy(self):
-        copy = Path(self.start.copy(), self.t0, self.t1)
+        copy = Path(self.start.copy(), self.t0, self.end_t)
 
         copy.points.clear()
 
@@ -101,11 +101,11 @@ class Path:
         return sum_length
 
     def velocity(self):
-        return self.length() / (self.t1 - self.t0)
+        return self.length() / (self.end_t - self.t0)
 
     # get a point on the path at the provided time
     def interpolate_point(self, t):
-        if t > self.t1 - self.t0:
+        if t > self.end_t - self.t0:
             return self.points[-1].copy()
 
         if len(self.points) < 2:
@@ -165,133 +165,137 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
         emitter_fcurve = get_fcurve(emitter, "location")
 
+        if start_at_emitter and emitter_fcurve is None:
+            return {'CANCELLED'} 
+
         for tracker_index in range(len(trackers)):
             tracker = trackers[tracker_index]
+            
             if tracker is None:
                 continue
 
-            fcurve = get_fcurve(tracker, "location")
+            # find the minimum distance for the velocity
+            # behind and in front to later calculate the optimum point taking
+            # motionblur correction into consideration
 
-            if not fcurve is None:
+            # first pair: laser hits before target
+            # second pair: laser shot behind target
+            compare = [[math.inf, None], [math.inf, None]]
+
+            reflect_point = None
+            # for a random place to hit on the lightsaber
+            rand = random.random()
+            use_reflect = lightsaber_top is not None and lightsaber_bottom is not None
+
+            if not start_at_emitter:
+                tracker_impact_fcurve = get_fcurve(tracker, "location")
+
+                if tracker_impact_fcurve is None:
+                    continue
+
                 # end point should be at the next frame where the sparks begin to show
-                t1 = int(fcurve.keyframe_points[0].co[0]) + self.props.end_time_offset
-
-                scene.frame_set(t1)
+                end_t = int(tracker_impact_fcurve.keyframe_points[0].co[0]) + self.props.end_time_offset
+                start_t = max(0, end_t - time_range)
+                scene.frame_set(end_t)
                 tracker_pos = tracker.matrix_world.to_translation()
+            else:
+                if tracker_index >= len(emitter_fcurve.keyframe_points):
+                    break
 
-                # find the minimum distance for the velocity
-                # behind and in front to later calculate the optimum point taking
-                # motionblur correction into consideration
-
-                # first pair: laser hits before target
-                # second pair: laser shot behind target
-                compare = [[math.inf, None], [math.inf, None]]
-
-                reflect_point = None
-                rand = random.random()
-                use_reflect = lightsaber_top is not None and lightsaber_bottom is not None
-
-                start_t = max(0, t1 - time_range)
-
-                if start_at_emitter:
-                    if tracker_index >= len(emitter_fcurve.keyframe_points):
-                        break
-
-                    start_t = int(emitter_fcurve.keyframe_points[tracker_index].co[0]) + self.props.end_time_offset
-                    t1 = start_t + time_range
-
+                start_t = int(emitter_fcurve.keyframe_points[tracker_index].co[0]) + self.props.end_time_offset
+                end_t = start_t + time_range
                 scene.frame_set(start_t)
-
+                # the origin position to use when the laser should start at the emitter keyframe
                 origin = emitter.matrix_world.to_translation()
 
-                for t in range(start_t, t1):
-                    scene.frame_set(t)
-                    #TODO use motionblur for the origin too?
-                    if not start_at_emitter:
-                        origin = emitter.matrix_world.to_translation()
+            for t in range(start_t, end_t):
+                scene.frame_set(t)
+                #TODO use motionblur for the origin too?
+                if not start_at_emitter:
+                    origin = emitter.matrix_world.to_translation()
 
-                    if start_at_emitter:
-                        path = Path(origin, start_t, t)
-                    else:
-                        path = Path(origin, t, t1)
+                if start_at_emitter:
+                    path = Path(origin, start_t, t)
+                else:
+                    path = Path(origin, t, end_t)
 
-                    new_vel = vel
+                new_vel = vel
 
-                    if use_reflect:
-                        # find the first point in time where the laser might hit the lightsaber
-                        for tr in range(start_t, t1):
-                            #calculate the lightsaber position with motionblur
-                            scene.frame_set(tr)
-                            ls = lightsaber_top.matrix_world.to_translation() - lightsaber_bottom.matrix_world.to_translation()
-                            reflect_point0 = lightsaber_bottom.matrix_world.to_translation() + ls * rand
+                if use_reflect:
+                    # find the first point in time where the laser might hit the lightsaber
+                    for tr in range(start_t, end_t):
+                        #calculate the lightsaber position with motionblur
+                        scene.frame_set(tr)
+                        ls = lightsaber_top.matrix_world.to_translation() - lightsaber_bottom.matrix_world.to_translation()
+                        reflect_point0 = lightsaber_bottom.matrix_world.to_translation() + ls * rand
 
-                            scene.frame_set(tr + 1)
-                            ls = lightsaber_top.matrix_world.to_translation() - lightsaber_bottom.matrix_world.to_translation()
-                            reflect_point1 = lightsaber_bottom.matrix_world.to_translation() + ls * rand
+                        scene.frame_set(tr + 1)
+                        ls = lightsaber_top.matrix_world.to_translation() - lightsaber_bottom.matrix_world.to_translation()
+                        reflect_point1 = lightsaber_bottom.matrix_world.to_translation() + ls * rand
 
-                            reflect_point = reflect_point0 + (reflect_point1 - reflect_point0) * lightsaber_mb
+                        reflect_point = reflect_point0 + (reflect_point1 - reflect_point0) * lightsaber_mb
 
-                            n = (reflect_point - origin).normalized()
+                        n = (reflect_point - origin).normalized()
 
-                            # test if the laser actually would fly behind the reflection point
-                            if start_at_emitter and (reflect_point - origin).dot((origin + new_vel * (tr - start_t) * n + n * new_vel * motionblur) - reflect_point) > 0:
-                                break
+                        # test if the laser actually would fly behind the reflection point
+                        if start_at_emitter and (reflect_point - origin).dot((origin + new_vel * (tr - start_t) * n + n * new_vel * motionblur) - reflect_point) > 0:
+                            break
 
-                            
-                            r0 = (reflect_point[0] - origin[0]) / n[0]
+                        
+                        r0 = (reflect_point[0] - origin[0]) / n[0]
 
-                            if (tr - t) * vel <= r0 <= (tr - t + 1) * vel:
-                                """pathreflection = Path(origin, t, tr)
+                        if (tr - t) * vel <= r0 <= (tr - t + 1) * vel:
+                            """pathreflection = Path(origin, t, tr)
 
-                                pathreflection.calculate_path([reflect_point], vel)
+                            pathreflection.calculate_path([reflect_point], vel)
 
-                                # optimise the reflection so that the laser gets bend at the reflection point
-                                if pathreflection.dot_end_vec(reflect_point) < 0:
-                                    new_ref_path = self.optim(pathreflection, reflect_point + n * laser_length * 0.5, motionblur)
-                                    new_vel = new_ref_path.velocity()"""
-                                break
+                            # optimise the reflection so that the laser gets bend at the reflection point
+                            if pathreflection.dot_end_vec(reflect_point) < 0:
+                                new_ref_path = self.optim(pathreflection, reflect_point + n * laser_length * 0.5, motionblur)
+                                new_vel = new_ref_path.velocity()"""
+                            break
 
-                    path.calculate_path([reflect_point, tracker_pos], new_vel)
+                path.calculate_path([reflect_point, tracker_pos], new_vel)
 
-                    test_behind = path.dot_end_vec(tracker_pos)
+                test_behind = path.dot_end_vec(tracker_pos)
 
-                    diff = tracker_pos - path.points[-1]
+                diff = tracker_pos - path.points[-1]
 
-                    if test_behind < 0:
-                        if diff.length < compare[0][0]:
-                            compare[0][0] = diff.length
-                            compare[0][1] = path
-                    else:
-                        if diff.length < compare[1][0]:
-                            compare[1][0] = diff.length
-                            compare[1][1] = path
+                if test_behind < 0:
+                    if diff.length < compare[0][0]:
+                        compare[0][0] = diff.length
+                        compare[0][1] = path
+                else:
+                    if diff.length < compare[1][0]:
+                        compare[1][0] = diff.length
+                        compare[1][1] = path
 
-                if compare[0][1] is not None and compare[1][1] is not None:
-                    optim_path0 = self.optim(compare[0][1], tracker_pos, motionblur)
-                    optim_path1 = self.optim(compare[1][1], tracker_pos, motionblur)
+            if compare[0][1] is not None and compare[1][1] is not None:
+                optim_path0 = self.optim(compare[0][1], tracker_pos, motionblur)
+                optim_path1 = self.optim(compare[1][1], tracker_pos, motionblur)
 
-                    if abs(optim_path0.velocity() - vel) < abs(optim_path1.velocity() - vel):
-                        laser_vel = optim_path0.velocity()
-                        laser_path = optim_path0
-                    else:
-                        laser_vel = optim_path1.velocity()
-                        laser_path = optim_path1
+                if abs(optim_path0.velocity() - vel) < abs(optim_path1.velocity() - vel):
+                    laser_vel = optim_path0.velocity()
+                    laser_path = optim_path0
+                else:
+                    laser_vel = optim_path1.velocity()
+                    laser_path = optim_path1
 
-                    curve_name = tracker.name + "_d" + str(round(laser_vel - vel, 2))
-                    self.create_laser_path(laser_path, curve_name, tracker.name, laser_obj)
+                curve_name = tracker.name + "_d" + str(round(laser_vel - vel, 2))
+                self.create_laser_path(laser_path, curve_name, tracker.name, laser_obj)
 
         return {'FINISHED'}
 
     def optim(self, path: Path, end, motionblur, r=1000):
         t0 = path.t0
-        t1 = path.t1
+        end_t = path.end_t
 
         new_path = path.copy()
         i = 0
 
         while True and i < r:
             new_v = new_path.velocity()
-            mt = t1 - t0 - 1 + motionblur
+            mt = end_t - t0 - 1 + motionblur
             motionblur_end = new_path.interpolate_point(mt)
 
             f = new_v * new_path.get_t_of_point(end) - new_v * mt
@@ -312,7 +316,7 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
     def create_laser_path(self, path, curve_name: str, laser_name: str, laser_obj):
 
-        # bpy.context.scene.frame_set(t1)
+        # bpy.context.scene.frame_set(end_t)
         lasers_coll = get_or_create_collection(bpy.context.scene.collection, "lasers")
         curves_coll = get_or_create_collection(lasers_coll, "curves")
 
@@ -332,9 +336,9 @@ class LASER_TRACER_OT(bpy.types.Operator):
         laser.keyframe_insert('hide_render', frame=path.t0)
 
         laser.hide_render = False
-        laser.keyframe_insert('hide_render', frame=path.t1 - 1)
+        laser.keyframe_insert('hide_render', frame=path.end_t - 1)
         laser.hide_render = True
-        laser.keyframe_insert('hide_render', frame=path.t1)
+        laser.keyframe_insert('hide_render', frame=path.end_t)
 
         if self.props.lightsaber_top is not None and self.props.lightsaber_bottom is not None:
             n = mathutils.Vector((0,0,0))
@@ -350,8 +354,8 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
             laser.location = curve_obj.location.copy()
             laser.keyframe_insert('location', frame=path.t0)
-            laser.location = curve_obj.location + n * (path.t1 - path.t0) * path.velocity()
-            laser.keyframe_insert('location', frame=path.t1)
+            laser.location = curve_obj.location + n * (path.end_t - path.t0) * path.velocity()
+            laser.keyframe_insert('location', frame=path.end_t)
 
             laser.cycles.motion_steps = self.props.object_mb_steps
 
@@ -364,9 +368,9 @@ class LASER_TRACER_OT(bpy.types.Operator):
             # animate evaluation time
             curve.eval_time = 0
             curve.keyframe_insert('eval_time', frame=path.t0)
-            curve.eval_time = path.t1 - path.t0
-            curve.keyframe_insert('eval_time', frame=path.t1)
-            curve.path_duration = path.t1 - path.t0
+            curve.eval_time = path.end_t - path.t0
+            curve.keyframe_insert('eval_time', frame=path.end_t)
+            curve.path_duration = path.end_t - path.t0
 
             convert_interpolation(get_fcurve(curve, "eval_time"), 'LINEAR')
 
