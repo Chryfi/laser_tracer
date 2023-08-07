@@ -32,6 +32,7 @@ class LASER_TRACER_PT(bpy.types.Panel):
         layout.prop(properties, "object_mb_steps")
         layout.prop(properties, "laser_length")
         layout.prop(properties, "laser_time_range")
+        layout.prop(properties, "start_at_emitter")
 
         layout.operator("laser_tracer.laser_tracer", text="Execute")
 
@@ -152,6 +153,7 @@ class LASER_TRACER_OT(bpy.types.Operator):
         lightsaber_bottom = self.props.lightsaber_bottom
         time_range = self.props.laser_time_range
         lightsaber_mb = self.props.lightsaber_motionblur
+        start_at_emitter = self.props.start_at_emitter
 
         if laser_obj is None or emitter is None or trackers is None or (bool(lightsaber_top) ^ bool(lightsaber_bottom)):
             return {'CANCELLED'}
@@ -161,7 +163,10 @@ class LASER_TRACER_OT(bpy.types.Operator):
         if motionblur == 1:
             motionblur = 0.5
 
-        for tracker in trackers:
+        emitter_fcurve = get_fcurve(emitter, "location")
+
+        for tracker_index in range(len(trackers)):
+            tracker = trackers[tracker_index]
             if tracker is None:
                 continue
 
@@ -186,17 +191,35 @@ class LASER_TRACER_OT(bpy.types.Operator):
                 rand = random.random()
                 use_reflect = lightsaber_top is not None and lightsaber_bottom is not None
 
-                for t in range(max(0, t1 - time_range), t1):
+                start_t = max(0, t1 - time_range)
+
+                if start_at_emitter:
+                    if tracker_index >= len(emitter_fcurve.keyframe_points):
+                        break
+
+                    start_t = int(emitter_fcurve.keyframe_points[tracker_index].co[0]) + self.props.end_time_offset
+                    t1 = start_t + time_range
+
+                scene.frame_set(start_t)
+
+                origin = emitter.matrix_world.to_translation()
+
+                for t in range(start_t, t1):
                     scene.frame_set(t)
                     #TODO use motionblur for the origin too?
-                    origin = emitter.matrix_world.to_translation()
-                    path = Path(origin, t, t1)
+                    if not start_at_emitter:
+                        origin = emitter.matrix_world.to_translation()
+
+                    if start_at_emitter:
+                        path = Path(origin, start_t, t)
+                    else:
+                        path = Path(origin, t, t1)
 
                     new_vel = vel
 
                     if use_reflect:
                         # find the first point in time where the laser might hit the lightsaber
-                        for tr in range(t, t1):
+                        for tr in range(start_t, t1):
                             #calculate the lightsaber position with motionblur
                             scene.frame_set(tr)
                             ls = lightsaber_top.matrix_world.to_translation() - lightsaber_bottom.matrix_world.to_translation()
@@ -210,6 +233,11 @@ class LASER_TRACER_OT(bpy.types.Operator):
 
                             n = (reflect_point - origin).normalized()
 
+                            # test if the laser actually would fly behind the reflection point
+                            if start_at_emitter and (reflect_point - origin).dot((origin + new_vel * (tr - start_t) * n + n * new_vel * motionblur) - reflect_point) > 0:
+                                break
+
+                            
                             r0 = (reflect_point[0] - origin[0]) / n[0]
 
                             if (tr - t) * vel <= r0 <= (tr - t + 1) * vel:

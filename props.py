@@ -26,12 +26,13 @@ class LASER_TRACER_Props(bpy.types.PropertyGroup, LASER_TRACER_RegisterModule):
                                   description="How long the range of frames to search for should be each laser. Save "
                                               "some performance..", default=200, min=2)
     object_mb_steps: IntProperty(name="Object Motionblur Steps",
-                                 description="Define the motionblur steps each laser object should have. This should "
-                                             "be increased when lightsaber reflection is used", default=1, min=1, max=7)
+                                 description="Define the value for the \"motionblur steps\" setting for each laser object. This should "
+                                             "be increased when lightsaber reflection is used, as the hard edge needs more steps.", default=1, min=1, max=7)
     lightsaber_motionblur: FloatProperty(name="Lightsaber Motionblur", description="", default=1.0, min=0.0)
     """laser_length: FloatProperty(name="Laser Length",
                                 description="The length of the laser bolt to use for things like reflection",
                                 default=1.0, min=0.0)"""
+    start_at_emitter: BoolProperty(name="Start at emitter", description="When this is enabled, the start time of each laser is determined by the next keyframe of the emitter.")
     laser_axis: EnumProperty(name="Laser Axis",
                              description="Axis of the laser. This would be used for the modifiers / constraints",
                              items={('X', 'X', 'X'), ('Y', 'Y', 'Y'), ('Z', 'Z', 'Z'), ('-X', '-X', '-X'), \
